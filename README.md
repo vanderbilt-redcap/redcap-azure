@@ -31,6 +31,8 @@ https://projectredcap.org/wp-content/resources/REDCapTechnicalOverview.pdf
 
   If after deployment, you would instead like to use a different SMTP relay, edit the values "smtp_fqdn_name", "smtp_port", "smtp_user_name", and "smtp_password" to point to your preferred endpoint. You can then delete the SendGrid service from this resource group.
 
+  If you use Exchange Online (part of the Microsoft 365 Suite), you can follow these steps to set it up and use it as an SMTP relay for this service: https://docs.microsoft.com/en-us/exchange/mail-flow-best-practices/how-to-set-up-a-multifunction-device-or-application-to-send-email-using-office-3
+  
 __Setup__
 
 This template will automatically deploy the resources necessary to run REDCap in Azure using PaaS (Platform as a Service) features. **IMPORTANT**: *The "Site Name" you choose will be re-used as part of the storage, website, and MySql database name. Make sure you don't use characters that will be rejected by MySql.* 
@@ -85,6 +87,9 @@ https://docs.microsoft.com/en-us/azure/store-sendgrid-php-how-to-send-email
 https://docs.microsoft.com/en-us/azure/storage/blobs/storage-blobs-introduction
  * Azure Resource Manager (ARM) overview
 https://docs.microsoft.com/en-us/azure/azure-resource-manager/resource-group-overview
+ * Exchange Online SMTP Relay Configuration
+https://docs.microsoft.com/en-us/exchange/mail-flow-best-practices/how-to-set-up-a-multifunction-device-or-application-to-send-email-using-office-3
+
 
 ### Contributing
 

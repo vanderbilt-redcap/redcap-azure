@@ -11,8 +11,14 @@
     "administratorLoginPassword": {
       "value": null
     },
-    "redcapAppZip": {
+    "redcapCommunityUsername": {
       "value": null
+    },
+    "redcapCommunityPassword": {
+      "value": null
+    },
+    "redcapAppZipVersion": {
+      "value": "latest"
     },
     "fromEmailAddress": {
       "value": null

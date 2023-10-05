@@ -195,7 +195,7 @@ function UpdateDBConnection {
 	$rand.Dispose()
 	$newsalt = [System.Convert]::ToBase64String($bytes)
     $dbFile = [System.Io.File]::ReadAllText($dbFilename)
-    $dbFile = $dbFile.Replace('your_mysql_host_name',"$env:APPSETTING_DBHostName").Replace('your_mysql_db_name', "$env:APPSETTING_DBName").Replace('your_mysql_db_username', "$env:APPSETTING_DBUserName").Replace('your_mysql_db_password', "$env:APPSETTING_DBPassword").Replace("`$salt = ''", "`$salt = '$newsalt'");
+    $dbFile = $dbFile.Replace("'';	//your_mysql_host_name","'$env:APPSETTING_DBHostName';").Replace("''; 	//your_mysql_db_name", "'$env:APPSETTING_DBName';").Replace("''; 	//your_mysql_db_username", "'$env:APPSETTING_DBUserName';").Replace("''; 	//your_mysql_db_password", "'$env:APPSETTING_DBPassword';").Replace("`$salt = ''", "`$salt = '$newsalt'");
      
     $dbFile | Set-Content $dbFilename
 }

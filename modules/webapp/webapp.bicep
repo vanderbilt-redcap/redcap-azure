@@ -2,7 +2,6 @@ param webAppName string
 param appServicePlanName string
 param location string
 param skuName string
-param skuTier string
 param tags object
 param linuxFxVersion string
 
@@ -22,6 +21,7 @@ param redcapZipUrl string
 param redcapCommunityUsernameSecretRef string
 #disable-next-line secure-secrets-in-params
 param redcapCommunityPasswordSecretRef string
+param redcapVersion string = ''
 param scmRepoUrl string
 param scmRepoBranch string
 param prerequisiteCommand string
@@ -29,9 +29,14 @@ param prerequisiteCommand string
 param appInsights_connectionString string
 param appInsights_instrumentationKey string
 
+param availabiltyZonesEnabled bool = false
+param enablePrivateEndpoint bool
+
 param smtpFQDN string = ''
 param smtpPort string = ''
 param smtpFromEmailAddress string = ''
+
+param timeZone string = 'UTC'
 
 // This is not a secret, it's a Key Vault reference
 #disable-next-line secure-secrets-in-params
@@ -42,31 +47,33 @@ param minTlsVersion string = '1.2'
 
 param uamiId string
 
-resource appSrvcPlan 'Microsoft.Web/serverfarms@2022-03-01' = {
+resource appSrvcPlan 'Microsoft.Web/serverfarms@2023-12-01' = {
   name: appServicePlanName
   location: location
   tags: tags
   sku: {
     name: skuName
-    tier: skuTier
   }
   kind: 'linux'
   properties: {
     reserved: true
+    zoneRedundant: availabiltyZonesEnabled
   }
 }
 
 var DBSslCa = '/home/site/wwwroot/DigiCertGlobalRootCA.crt.pem'
 
-resource webApp 'Microsoft.Web/sites@2022-03-01' = {
+resource webApp 'Microsoft.Web/sites@2023-12-01' = {
   name: webAppName
   location: location
   tags: tags
   properties: {
     httpsOnly: true
+    endToEndEncryptionEnabled: true
     serverFarmId: appSrvcPlan.id
     virtualNetworkSubnetId: integrationSubnetId
     keyVaultReferenceIdentity: uamiId
+
     siteConfig: {
       alwaysOn: true
       http20Enabled: true
@@ -76,10 +83,7 @@ resource webApp 'Microsoft.Web/sites@2022-03-01' = {
       ftpsState: 'FtpsOnly'
       appCommandLine: prerequisiteCommand
       appSettings: [
-        {
-          name: 'redcapAppZip'
-          value: redcapZipUrl
-        }
+        // REDCap runtime settings
         {
           name: 'DBHostName'
           value: dbHostName
@@ -96,6 +100,15 @@ resource webApp 'Microsoft.Web/sites@2022-03-01' = {
           name: 'DBPassword'
           value: dbPasswordSecretRef
         }
+        // REDCap deployment settings
+        {
+          name: 'redcapAppZip'
+          value: redcapZipUrl
+        }
+        {
+          name: 'zipVersion'
+          value: redcapVersion
+        }
         {
           name: 'redcapCommunityUsername'
           value: redcapCommunityUsernameSecretRef
@@ -108,6 +121,7 @@ resource webApp 'Microsoft.Web/sites@2022-03-01' = {
           name: 'DBSslCa'
           value: DBSslCa
         }
+        // SMTP, possibly legacy settings
         {
           name: 'smtpFQDN'
           value: smtpFQDN
@@ -120,6 +134,7 @@ resource webApp 'Microsoft.Web/sites@2022-03-01' = {
           name: 'fromEmailAddress'
           value: smtpFromEmailAddress
         }
+        // END SMTP
         {
           name: 'APPINSIGHTS_INSTRUMENTATIONKEY'
           value: appInsights_instrumentationKey
@@ -132,6 +147,7 @@ resource webApp 'Microsoft.Web/sites@2022-03-01' = {
           name: 'SCM_DO_BUILD_DURING_DEPLOYMENT'
           value: '1'
         }
+        // EDOC configuration, used during deployment only
         {
           name: 'StorageKey'
           value: storageAccountKeySecretRef
@@ -144,9 +160,19 @@ resource webApp 'Microsoft.Web/sites@2022-03-01' = {
           name: 'StorageContainerName'
           value: storageAccountContainerName
         }
+        // END EDOC
         {
           name: 'ENABLE_DYNAMIC_INSTALL'
           value: 'true'
+        }
+        {
+          // Ensure /home/site/ini/redcap.ini and /home/site/ini/extensions.ini gets processed
+          name: 'PHP_INI_SCAN_DIR'
+          value: '/usr/local/etc/php/conf.d:/home/site/ini'
+        }
+        {
+          name: 'WEBSITE_TIME_ZONE'
+          value: timeZone
         }
       ]
     }
@@ -161,7 +187,7 @@ resource webApp 'Microsoft.Web/sites@2022-03-01' = {
 
 // SCM Basic Authentication is required when using the App Service Build Service
 // Per https://learn.microsoft.com/en-us/azure/app-service/deploy-continuous-deployment?tabs=github%2Cappservice#what-are-the-build-providers
-resource basicScmCredentials 'Microsoft.Web/sites/basicPublishingCredentialsPolicies@2023-01-01' = {
+resource basicScmCredentials 'Microsoft.Web/sites/basicPublishingCredentialsPolicies@2023-12-01' = {
   parent: webApp
   name: 'scm'
   properties: {
@@ -169,7 +195,7 @@ resource basicScmCredentials 'Microsoft.Web/sites/basicPublishingCredentialsPoli
   }
 }
 
-resource sourcecontrol 'Microsoft.Web/sites/sourcecontrols@2022-09-01' = {
+resource sourcecontrol 'Microsoft.Web/sites/sourcecontrols@2023-12-01' = {
   parent: webApp
   name: 'web'
   properties: {
@@ -177,10 +203,10 @@ resource sourcecontrol 'Microsoft.Web/sites/sourcecontrols@2022-09-01' = {
     branch: scmRepoBranch
     isManualIntegration: true
   }
-  dependsOn: [ privateDnsZoneGroupsWebApp ]
+  dependsOn: [privateDnsZoneGroupsWebApp]
 }
 
-resource peWebApp 'Microsoft.Network/privateEndpoints@2022-07-01' = {
+resource peWebApp 'Microsoft.Network/privateEndpoints@2022-07-01' = if (enablePrivateEndpoint) {
   name: 'pe-${webApp.name}'
   location: location
   properties: {
@@ -201,7 +227,7 @@ resource peWebApp 'Microsoft.Network/privateEndpoints@2022-07-01' = {
   }
 }
 
-resource privateDnsZoneGroupsWebApp 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2022-07-01' = {
+resource privateDnsZoneGroupsWebApp 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2022-07-01' = if (enablePrivateEndpoint) {
   name: 'privatednszonegroup'
   parent: peWebApp
   properties: {

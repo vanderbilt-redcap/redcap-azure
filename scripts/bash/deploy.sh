@@ -41,7 +41,7 @@ if [ -z "$APPSETTING_redcapAppZip" ]; then
     echo "Missing REDCap Community site username." >> /home/site/log-$stamp.txt
     exit 1
   fi
-
+  
   if [ -z "$APPSETTING_redcapCommunityPassword" ]; then
     echo "Missing REDCap Community site password." >> /home/site/log-$stamp.txt
     exit 1

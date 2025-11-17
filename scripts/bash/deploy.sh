@@ -51,7 +51,6 @@ if [ -z "$APPSETTING_redcapAppZip" ]; then
     echo "zipVersion is null or empty. Setting to latest" >> /home/site/log-$stamp.txt
     export APPSETTING_zipVersion="latest"
   fi
-  
 
   wget --method=post -O $redcapZipPath -q --body-data="username=$APPSETTING_redcapCommunityUsername&password=$APPSETTING_redcapCommunityPassword&version=$APPSETTING_zipVersion&install=1" --header=Content-Type:application/x-www-form-urlencoded https://redcap.vumc.org/plugins/redcap_consortium/versions.php
 

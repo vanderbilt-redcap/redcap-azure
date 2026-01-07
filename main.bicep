@@ -1,7 +1,10 @@
 targetScope = 'subscription'
 
+@description('The resource group name to deploy everything into.')
+param resourceGroupName string = 'Redcap'
+
 @description('The Azure region to target for the deployment. Replaces {loc} in namingConvention.')
-param location string = 'eastus'
+param location string = 'westus2'
 
 @description('The environment designator for the deployment. Replaces {env} in namingConvention.')
 // @allowed([
@@ -9,8 +12,10 @@ param location string = 'eastus'
 //   'demo'
 //   'prod'
 // ])
+@minLength(1)
 param environment string = 'demo'
 @description('The workload name. Replaces {workloadName} in namingConvention.')
+@minLength(1)
 param workloadName string = 'redcap'
 @description('The Azure resource naming convention. Include the following placeholders (case-sensitive): {workloadName}, {env}, {rtype}, {loc}, {seq}.')
 param namingConvention string = '{workloadName}-{env}-{rtype}-{loc}-{seq}'
@@ -80,7 +85,7 @@ param smtpPort string = ''
 @description('The email address to use as the sender for outgoing emails.')
 param smtpFromEmailAddress string = ''
 
-param appServiceSkuName string = 'P0v3'
+param appServiceSkuName string = 'B2'
 
 @description('Determines whether availability zone redundancy is enabled for the MySQL Flexible Server and the app service. The region must support availability zones.')
 param availabilityZonesEnabled bool = false
@@ -89,34 +94,10 @@ param existingVirtualNetworkId string = ''
 
 param appServiceTimeZone string = 'UTC'
 
+// Azure Front Door configuration
+param enableFrontDoor bool = true
+
 var sequenceFormatted = format('{0:00}', sequence)
-var rgNamingStructure = replace(
-  replace(
-    replace(
-      replace(replace(namingConvention, '{rtype}', 'rg'), '{workloadName}', '${workloadName}-{rgName}'),
-      '{loc}',
-      location
-    ),
-    '{seq}',
-    sequenceFormatted
-  ),
-  '{env}',
-  environment
-)
-// The name of the VNet is either a new name or the name of the existing VNet parsed from the resource ID
-var vnetName = empty(existingVirtualNetworkId)
-  ? nameModule[0].outputs.shortName
-  : split(existingVirtualNetworkId, '/')[8]
-
-var strgName = nameModule[1].outputs.shortName
-var webAppName = nameModule[2].outputs.shortName
-var kvName = nameModule[3].outputs.shortName
-var sqlName = nameModule[4].outputs.shortName
-var planName = nameModule[5].outputs.shortName
-var uamiName = nameModule[6].outputs.shortName
-var dplscrName = nameModule[7].outputs.shortName
-var lawName = nameModule[8].outputs.shortName
-
 var deploymentNameStructure = '${workloadName}-${environment}-${sequenceFormatted}-{rtype}-${deploymentTime}'
 
 // TODO: Define type
@@ -134,29 +115,6 @@ param subnets object = {
       }
       {
         service: 'Microsoft.Storage'
-        locations: [
-          location
-        ]
-      }
-    ]
-  }
-  ComputeSubnet: {
-    addressPrefix: cidrSubnet(vnetAddressSpace, 27, 1)
-    serviceEndpoints: [
-      {
-        service: 'Microsoft.KeyVault'
-        locations: [
-          location
-        ]
-      }
-      {
-        service: 'Microsoft.Storage'
-        locations: [
-          location
-        ]
-      }
-      {
-        service: 'Microsoft.Web'
         locations: [
           location
         ]
@@ -215,286 +173,53 @@ var tags = {
   environment: environment
 }
 
-var secrets = {
-  sqlAdminName: mySqlModule.outputs.sqlAdmin
-  sqlPassword: sqlPassword
-  redcapCommunityUsername: redcapCommunityUsername
-  redcapCommunityPassword: redcapCommunityPassword
-}
-
-var resourceTypes = [
-  'vnet'
-  'st'
-  'app'
-  'kv'
-  'mysql'
-  'plan'
-  'uami'
-  'dplscr'
-  'law'
-]
-
-@batchSize(1)
-module nameModule 'modules/common/createValidAzResourceName.bicep' = [
-  for workload in resourceTypes: {
-    name: take(replace(deploymentNameStructure, '{rtype}', 'nameGen-${workload}'), 64)
-    params: {
-      location: location
-      environment: environment
-      namingConvention: namingConvention
-      resourceType: workload
-      sequence: sequence
-      workloadName: workloadName
-      addRandomChars: 4
-    }
-  }
-]
-
-module rolesModule './modules/common/roles.bicep' = {
-  name: take(replace(deploymentNameStructure, '{rtype}', 'roles'), 64)
-}
-
-var storageAccountKeySecretName = 'storageKey'
-// The secrets object is converted to an array using the items() function, which alphabetically sorts it
-var defaultSecretNames = map(items(secrets), s => s.key)
-var additionalSecretNames = [storageAccountKeySecretName]
-var secretNames = concat(defaultSecretNames, additionalSecretNames)
-
-// The output will be in alphabetical order
-// LATER: Output an object instead
-module kvSecretReferencesModule './modules/common/appSvcKeyVaultRefs.bicep' = {
-  name: take(replace(deploymentNameStructure, '{rtype}', 'kv-secrets'), 64)
-  params: {
-    keyVaultName: kvName
-    secretNames: secretNames
-  }
-}
-
-module virtualNetworkModule './modules/networking/main.bicep' = if (empty(existingVirtualNetworkId)) {
-  name: take(replace(deploymentNameStructure, '{rtype}', 'network'), 64)
-  params: {
-    resourceGroupName: replace(rgNamingStructure, '{rgName}', 'network')
-    virtualNetworkName: vnetName
-    vnetAddressPrefix: vnetAddressSpace
-    location: location
-    subnets: subnets
-    customDnsIPs: []
-    tags: tags
-    customTags: {
-      workloadType: 'networking'
-    }
-
-    deploymentNameStructure: deploymentNameStructure
-  }
-}
-
-module monitoring './modules/monitoring/main.bicep' = {
-  name: take(replace(deploymentNameStructure, '{rtype}', 'monitoring'), 64)
-  params: {
-    resourceGroupName: replace(rgNamingStructure, '{rgName}', 'monitoring')
-    appInsightsName: 'appInsights-${webAppName}'
-    logAnalyticsWorkspaceName: lawName
-    logAnalyticsWorkspaceSku: 'PerGB2018'
-    retentionInDays: 30
-    location: location
-    tags: tags
-    customTags: {
-      workloadType: 'monitoring'
-    }
-
-    deploymentNameStructure: deploymentNameStructure
-  }
-}
-
-var privateEndpointSubnetId = empty(existingVirtualNetworkId)
-  ? virtualNetworkModule.outputs.subnets.PrivateLinkSubnet.id
-  : '${existingVirtualNetworkId}/subnets/${subnets.PrivateLinkSubnet.existingSubnetName}'
-
-var virtualNetworkId = empty(existingVirtualNetworkId)
-  ? virtualNetworkModule.outputs.virtualNetworkId
-  : existingVirtualNetworkId
-
-module storageAccountModule './modules/storage/main.bicep' = {
-  name: take(replace(deploymentNameStructure, '{rtype}', 'storage'), 64)
-  params: {
-    resourceGroupName: replace(rgNamingStructure, '{rgName}', 'storage')
-    location: location
-    storageAccountName: strgName
-    peSubnetId: privateEndpointSubnetId
-    storageContainerName: 'redcap'
-    kind: 'StorageV2'
-    storageAccountSku: 'Standard_LRS'
-
-    virtualNetworkId: virtualNetworkId
-    privateDnsZoneName: 'privatelink.blob.${az.environment().suffixes.storage}'
-    existingPrivateDnsZonesResourceGroupId: existingPrivateDnsZonesResourceGroupId
-
-    tags: tags
-    customTags: {
-      workloadType: 'storageAccount'
-    }
-
-    deploymentNameStructure: deploymentNameStructure
-
-    keyVaultSecretName: storageAccountKeySecretName
-    keyVaultId: keyVaultModule.outputs.id
-  }
-}
-
-module keyVaultModule './modules/kv/main.bicep' = {
-  name: take(replace(deploymentNameStructure, '{rtype}', 'keyVault'), 64)
-  params: {
-    resourceGroupName: replace(rgNamingStructure, '{rgName}', 'keyVault')
-    keyVaultName: kvName
-    location: location
-    tags: tags
-    customTags: {
-      workloadType: 'keyVault'
-    }
-    peSubnetId: privateEndpointSubnetId
-    virtualNetworkId: virtualNetworkId
-    existingPrivateDnsZonesResourceGroupId: existingPrivateDnsZonesResourceGroupId
-    roleAssignments: [
-      {
-        RoleDefinitionId: rolesModule.outputs.roles['Key Vault Administrator']
-        objectId: identityObjectId
-      }
-      {
-        RoleDefinitionId: rolesModule.outputs.roles['Key Vault Secrets User']
-        objectId: uamiModule.outputs.principalId
-        principtalType: 'ServicePrincipal'
-      }
-    ]
-    privateDnsZoneName: 'privatelink.vaultcore.azure.net'
-    secrets: secrets
-
-    deploymentNameStructure: deploymentNameStructure
-  }
-}
-
-module mySqlModule './modules/sql/main.bicep' = {
-  name: take(replace(deploymentNameStructure, '{rtype}', 'mysql'), 64)
-  params: {
-    resourceGroupName: replace(rgNamingStructure, '{rgName}', 'database')
-    flexibleSqlServerName: sqlName
-    location: location
-    tags: tags
-
-    customTags: {
-      workloadType: 'mySqlFlexibleServer'
-    }
-    skuName: mySqlSkuName
-    SkuTier: mySqlSkuTier
-    StorageSizeGB: mySqlStorageSizeGB
-    StorageIops: mySqlStorageIops
-    peSubnetId: empty(existingVirtualNetworkId)
-      ? virtualNetworkModule.outputs.subnets.MySQLFlexSubnet.id
-      : '${existingVirtualNetworkId}/subnets/${subnets.MySQLFlexSubnet.existingSubnetName}'
-    privateDnsZoneName: 'privatelink.mysql.database.azure.com'
-    existingPrivateDnsZonesResourceGroupId: existingPrivateDnsZonesResourceGroupId
-    sqlAdminUser: sqlAdmin
-    sqlAdminPasword: sqlPassword
-    mysqlVersion: '8.0.21'
-    // TODO: Consider using workloadname + 'db'
-    databaseName: 'redcapdb'
-
-    highAvailability: mySqlHighAvailability
-    availabilityZonesEnabled: availabilityZonesEnabled
-
-    roles: rolesModule.outputs.roles
-
-    uamiId: uamiModule.outputs.id
-    uamiPrincipalId: uamiModule.outputs.principalId
-
-    deploymentScriptName: dplscrName
-
-    // Required charset and collation for REDCap
-    database_charset: 'utf8'
-    database_collation: 'utf8_general_ci'
-
-    virtualNetworkId: virtualNetworkId
-
-    deploymentNameStructure: deploymentNameStructure
-  }
-}
-
-resource webAppResourceGroup 'Microsoft.Resources/resourceGroups@2023-07-01' = {
-  name: replace(rgNamingStructure, '{rgName}', 'web')
+resource redcapResourceGroup 'Microsoft.Resources/resourceGroups@2023-07-01' = {
+  name: resourceGroupName
   location: location
   tags: union(tags, {
-    workloadType: 'web'
+    workloadType: 'redcap'
   })
 }
 
-module webAppModule './modules/webapp/main.bicep' = {
-  name: take(replace(deploymentNameStructure, '{rtype}', 'appService'), 64)
-  scope: webAppResourceGroup
+module redcap 'main.rg.bicep' = {
+  name: 'redcap-${uniqueString(deploymentNameStructure)}'
+  scope: redcapResourceGroup
   params: {
-    webAppName: webAppName
-    appServicePlanName: planName
     location: location
-    skuName: appServiceSkuName
-    peSubnetId: privateEndpointSubnetId
-    appInsights_connectionString: monitoring.outputs.appInsightsResourceId
-    appInsights_instrumentationKey: monitoring.outputs.appInsightsInstrumentationKey
-    linuxFxVersion: 'php|8.2'
-    tags: tags
-    customTags: {
-      workloadType: 'webApp'
-    }
-
-    existingPrivateDnsZonesResourceGroupId: existingPrivateDnsZonesResourceGroupId
-    privateDnsZoneName: 'privatelink.azurewebsites.net'
-    virtualNetworkId: virtualNetworkId
-
+    environment: environment
+    workloadName: workloadName
+    namingConvention: namingConvention
+    sequence: sequence
+    identityObjectId: identityObjectId
+    vnetAddressSpace: vnetAddressSpace
     redcapZipUrl: redcapZipUrl
-    dbHostName: mySqlModule.outputs.fqdn
-    dbName: mySqlModule.outputs.databaseName
-
-    dbUserNameSecretRef: kvSecretReferencesModule.outputs.keyVaultRefs[2]
-    dbPasswordSecretRef: kvSecretReferencesModule.outputs.keyVaultRefs[3]
-
-    redcapCommunityUsernameSecretRef: kvSecretReferencesModule.outputs.keyVaultRefs[1]
-    redcapCommunityPasswordSecretRef: kvSecretReferencesModule.outputs.keyVaultRefs[0]
+    redcapCommunityUsername: redcapCommunityUsername
+    redcapCommunityPassword: redcapCommunityPassword
     redcapVersion: redcapVersion
-
-    storageAccountKeySecretRef: kvSecretReferencesModule.outputs.keyVaultRefs[4]
-    storageAccountContainerName: storageAccountModule.outputs.containerName
-    storageAccountName: storageAccountModule.outputs.name
-
-    // Enable VNet integration
-    integrationSubnetId: empty(existingVirtualNetworkId)
-      ? virtualNetworkModule.outputs.subnets.IntegrationSubnet.id
-      : '${existingVirtualNetworkId}/subnets/${subnets.IntegrationSubnet.existingSubnetName}'
-
     scmRepoUrl: scmRepoUrl
     scmRepoBranch: scmRepoBranch
     prerequisiteCommand: prerequisiteCommand
-
+    enableAppServicePrivateEndpoint: enableAppServicePrivateEndpoint
+    sqlPassword: sqlPassword
+    mySqlHighAvailability: mySqlHighAvailability
+    mySqlSkuName: mySqlSkuName
+    mySqlSkuTier: mySqlSkuTier
+    mySqlStorageSizeGB: mySqlStorageSizeGB
+    mySqlStorageIops: mySqlStorageIops
+    sqlAdmin: sqlAdmin
     smtpFQDN: smtpFQDN
-    smtpFromEmailAddress: smtpFromEmailAddress
     smtpPort: smtpPort
-
-    deploymentNameStructure: deploymentNameStructure
-
-    uamiId: uamiModule.outputs.id
-
+    smtpFromEmailAddress: smtpFromEmailAddress
+    appServiceSkuName: appServiceSkuName
     availabilityZonesEnabled: availabilityZonesEnabled
-    enablePrivateEndpoint: enableAppServicePrivateEndpoint
+    existingPrivateDnsZonesResourceGroupId: existingPrivateDnsZonesResourceGroupId
+    existingVirtualNetworkId: existingVirtualNetworkId
+    appServiceTimeZone: appServiceTimeZone
+    subnets: subnets
 
-    timeZone: appServiceTimeZone
+    enableFrontDoor: enableFrontDoor
   }
 }
 
-module uamiModule 'modules/uami/main.bicep' = {
-  name: take(replace(deploymentNameStructure, '{rtype}', 'uami'), 64)
-  scope: webAppResourceGroup
-  params: {
-    tags: tags
-    location: location
-    uamiName: uamiName
-  }
-}
-
-// // The web app URL
-output webAppUrl string = webAppModule.outputs.webAppUrl
+output webAppUrl string = redcap.outputs.webAppUrl
+output frontDoorUrl string = redcap.outputs.frontDoorUrl

@@ -1,0 +1,205 @@
+# deploy main.bicep without Front Door (direct public webapp)
+# Deploy REDCap from a pre-provided ZIP URL (no REDCap community credentials required)
+# IMPORTANT: This workflow updates App Service access restrictions so the site is reachable from the public Internet.
+
+name: Azure REDCap Deployment (Direct Public WebApp)
+
+on:
+    workflow_dispatch:
+
+permissions:
+    id-token: write
+    contents: read
+
+env:
+    azCliVersion: 2.30.0
+    environment: 'env-redcap'
+    region: 'westus2'
+
+jobs:
+    # Validate the Bicep templates
+    validateDeployment:
+        runs-on: ubuntu-latest
+
+        steps:
+          - uses: actions/checkout@main
+            name: Checkout
+
+          - uses: azure/login@v1
+            name: Azure Login
+            with:
+              creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+          - name: Generate deployment secrets
+            id: gen
+            shell: bash
+            run: |
+              set -euo pipefail
+              SQL_PASSWORD=$(python3 -c "import secrets,string; alphabet=string.ascii_letters+string.digits+'!@#$%^&*()-_=+[]{}:,.?'; print(''.join(secrets.choice(alphabet) for _ in range(32)))")
+              echo "::add-mask::$SQL_PASSWORD"
+              echo "sqlPassword=$SQL_PASSWORD" >> "$GITHUB_OUTPUT"
+
+          # Deploy Bicep file
+          - name: validateTemplates
+            uses: azure/arm-deploy@v1
+            with:
+              scope: 'subscription'
+              template: ./main.bicep
+              parameters: >
+                ./main-ns.bicepparam
+                sqlPassword=${{ steps.gen.outputs.sqlPassword }}
+                redcapZipUrl=${{ secrets.REDCAP_ZIP_URL }}
+                enableFrontDoor=false
+                enableAppServicePrivateEndpoint=false
+              deploymentMode: 'Validate'
+              region: ${{ env.region }}
+
+    # Deploy the resources
+    deployResources:
+      runs-on: ubuntu-latest
+      environment: 'nonProduction' ## Replace with your environment name
+      needs: [
+        validateDeployment
+      ]
+
+      steps:
+          - uses: actions/checkout@main
+            name: Checkout
+
+          - uses: azure/login@v1
+            name: Azure Login
+            with:
+              creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+          - name: Generate deployment secrets
+            id: gen
+            shell: bash
+            run: |
+              set -euo pipefail
+              SQL_PASSWORD=$(python3 -c "import secrets,string; alphabet=string.ascii_letters+string.digits+'!@#$%^&*()-_=+[]{}:,.?'; print(''.join(secrets.choice(alphabet) for _ in range(32)))")
+              echo "::add-mask::$SQL_PASSWORD"
+              echo "sqlPassword=$SQL_PASSWORD" >> "$GITHUB_OUTPUT"
+
+          # Deploy Bicep file
+          - name: deploy
+            uses: azure/arm-deploy@v1
+            with:
+              scope: 'subscription'
+              template: ./main.bicep
+              deploymentMode: 'Incremental'
+              parameters: >
+                ./main-ns.bicepparam
+                sqlPassword=${{ steps.gen.outputs.sqlPassword }}
+                redcapZipUrl=${{ secrets.REDCAP_ZIP_URL }}
+                enableFrontDoor=false
+                enableAppServicePrivateEndpoint=false
+              region: ${{ env.region }}
+
+          # Ensure the Web App is reachable directly from the public Internet.
+          # The Bicep template currently sets ipSecurityRestrictionsDefaultAction='Deny' and allows only Azure Front Door.
+          # When Front Door is disabled, direct access to https://<app>.azurewebsites.net would be blocked unless we change this.
+          - name: Enable direct public access to Web App
+            shell: bash
+            run: |
+              set -euo pipefail
+              RG=Redcap
+              APP_NAME=$(az resource list -g "$RG" --resource-type Microsoft.Web/sites --query "[0].name" -o tsv)
+              if [[ -z "$APP_NAME" ]]; then
+                echo "ERROR: Could not find Web App in resource group: $RG" >&2
+                exit 1
+              fi
+
+              echo "Configuring access restrictions for: $APP_NAME"
+
+              # Set default action to Allow for both main site and SCM site
+              az webapp config access-restriction set \
+                --resource-group "$RG" \
+                --name "$APP_NAME" \
+                --default-action Allow \
+                --scm-default-action Allow \
+                --use-same-restrictions-for-scm-site true
+
+              echo "Access restrictions updated: default Allow (main + SCM)"
+
+          # Create storage container after deployment
+          # Storage account has publicNetworkAccess disabled, so container must be created via management plane
+          - name: Create Storage Container
+            shell: bash
+            run: |
+              set -euo pipefail
+              STORAGE_ACCOUNT=$(az storage account list -g Redcap --query "[?starts_with(name, 'redcap')].name" -o tsv | head -n 1)
+              echo "Creating container 'redcap' in storage account: $STORAGE_ACCOUNT"
+              az storage container create \
+                --name redcap \
+                --account-name "$STORAGE_ACCOUNT" \
+                --auth-mode login \
+                --fail-on-exist false || echo "Container creation completed"
+
+          # Configure source control and deploy REDCap build scripts
+          # This deploys the Microsoft azure-redcap-paas repo which contains:
+          # - .deployment file (tells Kudu to run deploy.sh)
+          # - scripts/bash/deploy.sh (downloads REDCap from community site)
+          # - scripts/bash/install.sh (configures database storage - run manually via SSH)
+          - name: Deploy REDCap Source
+            shell: bash
+            run: |
+              set -euo pipefail
+              APP_NAME=$(az resource list -g Redcap --resource-type Microsoft.Web/sites --query "[0].name" -o tsv)
+
+              echo "=== Step 1: Configure source control for deployment scripts ==="
+              # Check if source control is already configured
+              EXISTING_REPO=$(az webapp deployment source show --name "$APP_NAME" --resource-group Redcap --query "repoUrl" -o tsv 2>/dev/null || echo "")
+
+              if [[ -z "$EXISTING_REPO" ]]; then
+                echo "Configuring source control..."
+                az webapp deployment source config \
+                  --name "$APP_NAME" \
+                  --resource-group Redcap \
+                  --repo-url 'https://github.com/Microsoft/azure-redcap-paas' \
+                  --branch main \
+                  --manual-integration
+              else
+                echo "Source control already configured: $EXISTING_REPO"
+              fi
+
+              echo "=== Step 2: Trigger deployment sync ==="
+              az webapp deployment source sync \
+                --name "$APP_NAME" \
+                --resource-group Redcap
+
+              echo "=== Step 3: Monitor deployment status ==="
+              for i in {1..20}; do
+                sleep 15
+                STATUS=$(az webapp deployment list --name "$APP_NAME" --resource-group Redcap --query "[0].status" -o tsv 2>/dev/null || echo "0")
+                ACTIVE=$(az webapp deployment list --name "$APP_NAME" --resource-group Redcap --query "[0].active" -o tsv 2>/dev/null || echo "false")
+                echo "Check $i/20: status=$STATUS, active=$ACTIVE"
+
+                if [[ "$STATUS" == "4" ]] && [[ "$ACTIVE" == "true" ]]; then
+                  echo "✓ Deployment completed successfully!"
+                  break
+                elif [[ "$STATUS" == "3" ]]; then
+                  echo "✗ Deployment failed!"
+                  az webapp log deployment show --name "$APP_NAME" --resource-group Redcap || true
+                  exit 1
+                fi
+
+                if [[ $i -eq 20 ]]; then
+                  echo "Deployment timeout after 5 minutes. Check logs manually:"
+                  echo "az webapp log deployment show --name $APP_NAME --resource-group Redcap"
+                fi
+              done
+
+              echo ""
+              echo "=========================================="
+              echo "REDCap infrastructure deployed!"
+              echo "=========================================="
+              echo "Web App (direct): https://${APP_NAME}.azurewebsites.net"
+              echo ""
+              echo "Database connectivity: Web App uses VNet integration; MySQL is private (no public access)."
+              echo ""
+              echo "IMPORTANT: Database storage configuration required!"
+              echo "Run these commands to complete setup:"
+              echo ""
+              echo "  az webapp ssh --name $APP_NAME --resource-group Redcap"
+              echo "  bash /home/site/repository/scripts/bash/install.sh"
+              echo ""

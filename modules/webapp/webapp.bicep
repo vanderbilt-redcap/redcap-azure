@@ -73,6 +73,7 @@ resource webApp 'Microsoft.Web/sites@2023-12-01' = {
     serverFarmId: appSrvcPlan.id
     virtualNetworkSubnetId: integrationSubnetId
     keyVaultReferenceIdentity: uamiId
+    publicNetworkAccess: 'Enabled'
 
     siteConfig: {
       alwaysOn: true
@@ -82,6 +83,17 @@ resource webApp 'Microsoft.Web/sites@2023-12-01' = {
       minTlsVersion: minTlsVersion
       ftpsState: 'FtpsOnly'
       appCommandLine: prerequisiteCommand
+      ipSecurityRestrictions: [
+        {
+          ipAddress: 'AzureFrontDoor.Backend'
+          action: 'Allow'
+          tag: 'ServiceTag'
+          priority: 100
+          name: 'Allow Front Door'
+        }
+      ]
+      ipSecurityRestrictionsDefaultAction: 'Deny'
+      scmIpSecurityRestrictionsUseMain: false
       appSettings: [
         // REDCap runtime settings
         {
@@ -147,6 +159,14 @@ resource webApp 'Microsoft.Web/sites@2023-12-01' = {
           name: 'SCM_DO_BUILD_DURING_DEPLOYMENT'
           value: '1'
         }
+        {
+          name: 'SCM_REPO_URL'
+          value: scmRepoUrl
+        }
+        {
+          name: 'SCM_REPO_BRANCH'
+          value: scmRepoBranch
+        }
         // EDOC configuration, used during deployment only
         {
           name: 'StorageKey'
@@ -195,16 +215,10 @@ resource basicScmCredentials 'Microsoft.Web/sites/basicPublishingCredentialsPoli
   }
 }
 
-resource sourcecontrol 'Microsoft.Web/sites/sourcecontrols@2023-12-01' = {
-  parent: webApp
-  name: 'web'
-  properties: {
-    repoUrl: scmRepoUrl
-    branch: scmRepoBranch
-    isManualIntegration: true
-  }
-  dependsOn: [privateDnsZoneGroupsWebApp]
-}
+// NOTE: sourcecontrols resource removed due to recurring provisioning failures with manual integration
+// Instead, deploy REDCap source code via zip deployment in the GitHub Actions workflow or via Azure CLI:
+// az webapp deployment source config --name <app> --resource-group <rg> --repo-url <url> --branch <branch> --manual-integration
+// OR use GitHub Actions zip deploy step after resource provisioning succeeds
 
 resource peWebApp 'Microsoft.Network/privateEndpoints@2022-07-01' = if (enablePrivateEndpoint) {
   name: 'pe-${webApp.name}'
@@ -227,7 +241,7 @@ resource peWebApp 'Microsoft.Network/privateEndpoints@2022-07-01' = if (enablePr
   }
 }
 
-resource privateDnsZoneGroupsWebApp 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2022-07-01' = if (enablePrivateEndpoint) {
+resource privateDnsZoneGroupsWebApp 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2022-07-01' = if (enablePrivateEndpoint && !empty(privateDnsZoneId)) {
   name: 'privatednszonegroup'
   parent: peWebApp
   properties: {
@@ -243,3 +257,4 @@ resource privateDnsZoneGroupsWebApp 'Microsoft.Network/privateEndpoints/privateD
 }
 
 output webAppUrl string = webApp.properties.defaultHostName
+output webAppHostname string = webApp.properties.defaultHostName

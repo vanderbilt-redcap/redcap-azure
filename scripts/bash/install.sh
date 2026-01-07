@@ -16,7 +16,17 @@ echo "mysql: $(which mysql)"
 #
 ####################################################################################
 
-/usr/bin/mysql -u$APPSETTING_DBUserName -h$APPSETTING_DBHostName -p$APPSETTING_DBPassword --ssl=true --ssl-ca=/home/site/wwwroot/DigiCertGlobalRootCA.crt.pem <<EOF
+#!/bin/bash
+
+# Create database and application user if they do not exist, then configure REDCap settings.
+# Use admin credentials provided in APPSETTING_DBUserName/APPSETTING_DBPassword. Do not require SSL from client here.
+
+/usr/bin/mysql -u"$APPSETTING_DBUserName" -h"$APPSETTING_DBHostName" -p"$APPSETTING_DBPassword" <<EOF
+CREATE DATABASE IF NOT EXISTS $APPSETTING_DBName;
+CREATE USER IF NOT EXISTS '$APPSETTING_DBUserName'@'%' IDENTIFIED WITH mysql_native_password BY '$APPSETTING_DBPassword';
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, INDEX, ALTER ON $APPSETTING_DBName.* TO '$APPSETTING_DBUserName'@'%';
+FLUSH PRIVILEGES;
+
 UPDATE $APPSETTING_DBName.redcap_config SET value = 'https://$WEBSITE_HOSTNAME/' WHERE field_name = 'redcap_base_url';
 UPDATE $APPSETTING_DBName.redcap_config SET value = '$APPSETTING_StorageAccount' WHERE field_name = 'azure_app_name';
 UPDATE $APPSETTING_DBName.redcap_config SET value = '$APPSETTING_StorageKey' WHERE field_name = 'azure_app_secret';

@@ -7,7 +7,7 @@ $version = 0;
 #DEPLOYMENT OPTIONS
 #Please review the azuredeploy.bicep file for available options
 $RGName        = "RG-Redcap"
-$DeployRegion  = "eastus"
+$DeployRegion  = "westus2"
 
 $parms = @{
 

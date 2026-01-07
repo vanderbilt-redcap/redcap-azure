@@ -140,7 +140,7 @@ resource dbConfigDeploymentScript 'Microsoft.Resources/deploymentScripts@2020-10
     retentionInterval: 'P1D'
     cleanupPreference: 'OnSuccess'
     forceUpdateTag: currentTime
-    scriptContent: 'az mysql flexible-server parameter set -g ${resourceGroup().name} --server-name ${server.name} --name sql_generate_invisible_primary_key --value OFF'
+    scriptContent: 'az mysql flexible-server parameter set -g ${resourceGroup().name} --server-name ${server.name} --name sql_generate_invisible_primary_key --value OFF && az mysql flexible-server parameter set -g ${resourceGroup().name} --server-name ${server.name} --name require_secure_transport --value OFF'
   }
   tags: tags
   dependsOn: [uamiMySqlRoleAssignmentModule]

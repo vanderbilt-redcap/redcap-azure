@@ -55,7 +55,7 @@ resource keyVault 'Microsoft.KeyVault/vaults@2022-07-01' = {
 }
 
 module keyVaultSecretsModule 'kvSecrets.bicep' = {
-  name: take(replace(deploymentNameStructure, '{rtype}', 'kv-secrets'), 64)
+  name: 'kv-secrets-${uniqueString(deploymentNameStructure)}'
   params: {
     keyVaultName: keyVault.name
     secrets: secrets
@@ -97,7 +97,7 @@ resource pekeyVault 'Microsoft.Network/privateEndpoints@2022-07-01' = {
   }
 }
 
-resource privateDnsZoneGroupsKeyVault 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2022-07-01' = {
+resource privateDnsZoneGroupsKeyVault 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2022-07-01' = if (!empty(privateDnsZoneId)) {
   name: 'privatednszonegroup'
   parent: pekeyVault
   properties: {

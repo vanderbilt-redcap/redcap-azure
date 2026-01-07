@@ -57,7 +57,7 @@ param deploymentNameStructure string
 var mergeTags = union(tags, customTags)
 
 module appService 'webapp.bicep' = {
-  name: take(replace(deploymentNameStructure, '{rtype}', 'planAndApp'), 64)
+  name: 'planAndApp-${uniqueString(deploymentNameStructure)}'
   params: {
     webAppName: webAppName
     appServicePlanName: appServicePlanName
@@ -71,7 +71,7 @@ module appService 'webapp.bicep' = {
     dbUserNameSecretRef: dbUserNameSecretRef
     peSubnetId: peSubnetId
     privateDnsZoneId: empty(existingPrivateDnsZonesResourceGroupId)
-      ? privateDns.outputs.privateDnsId
+      ? privateDns!.outputs.privateDnsId
       : '${existingPrivateDnsZonesResourceGroupId}/providers/Microsoft.Network/privateDnsZones/${privateDnsZoneName}'
     integrationSubnetId: integrationSubnetId
 
@@ -105,7 +105,7 @@ module appService 'webapp.bicep' = {
 }
 
 module privateDns '../pdns/main.bicep' = if (empty(existingPrivateDnsZonesResourceGroupId)) {
-  name: take(replace(deploymentNameStructure, '{rtype}', 'app-dns'), 64)
+  name: 'app-dns-${uniqueString(deploymentNameStructure)}'
   params: {
     privateDnsZoneName: privateDnsZoneName
     virtualNetworkId: virtualNetworkId
@@ -114,3 +114,4 @@ module privateDns '../pdns/main.bicep' = if (empty(existingPrivateDnsZonesResour
 }
 
 output webAppUrl string = appService.outputs.webAppUrl
+output webAppHostname string = appService.outputs.webAppHostname

@@ -43,10 +43,12 @@ resource blobServices 'Microsoft.Storage/storageAccounts/blobServices@2021-09-01
   parent: storageAccount
 }
 
-resource storageContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2021-09-01' = if (kind == 'StorageV2') {
-  name: storageContainerName
-  parent: blobServices
-}
+// Container creation disabled: storage account has publicNetworkAccess='Disabled',
+// preventing ARM from accessing data-plane API. Create container in post-deployment step.
+// resource storageContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2021-09-01' = if (kind == 'StorageV2') {
+//   name: storageContainerName
+//   parent: blobServices
+// }
 
 resource fileServices 'Microsoft.Storage/storageAccounts/fileServices@2022-09-01' = if (kind == 'FileStorage') {
   name: 'default'
@@ -83,7 +85,7 @@ resource privateEndpoint 'Microsoft.Network/privateEndpoints@2022-07-01' = {
   }
 }
 
-resource privateDnsZoneGroupsStorage 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2022-07-01' = {
+resource privateDnsZoneGroupsStorage 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2022-07-01' = if (!empty(privateDnsZoneId)) {
   name: 'default'
   parent: privateEndpoint
   properties: {
@@ -109,7 +111,7 @@ resource keyVaultResourceGroup 'Microsoft.Resources/resourceGroups@2023-07-01' e
 }
 
 module keyVaultSecretsModule '../kv/kvSecrets.bicep' = {
-  name: take(replace(deploymentNameStructure, '{rtype}', 'kv-st-secret'), 64)
+  name: 'kv-st-secret-${uniqueString(deploymentNameStructure)}'
   scope: keyVaultResourceGroup
   params: {
     keyVaultName: keyVaultName
@@ -121,4 +123,4 @@ module keyVaultSecretsModule '../kv/kvSecrets.bicep' = {
 
 output name string = storageAccount.name
 output id string = storageAccount.id
-output containerName string = storageContainer.name
+output containerName string = storageContainerName
